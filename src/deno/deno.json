@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "jose": "npm:jose@^6",
+    "zod": "npm:zod@^4"
+  }
+}
