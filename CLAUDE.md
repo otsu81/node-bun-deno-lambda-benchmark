@@ -4,14 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a benchmark project comparing Bun, Node, and Deno runtime performance on AWS Lambda. Each runtime runs a set of identical workloads (JWT sign/validate, JSON processing, gzip compression, array operations) deployed as Docker-based Lambda functions.
+This is a benchmark project comparing Bun, Node, and Deno runtime performance on AWS Lambda. Each runtime runs identical workloads (JWT sign/validate, JSON processing, gzip compression, array operations) deployed as Lambda functions.
 
-## Two Package Roots
+## Package Roots
 
 This repo has **two separate package.json files** with different runtimes:
 
 - `/package.json` — CDK infrastructure (Node/npm), TypeScript compiled via `tsc`
 - `/src/bun/package.json` — Bun Lambda handlers (Bun runtime), no build step needed
+
+Deno uses `src/deno/deno.json` for import maps (no package.json).
 
 ## Common Commands
 
@@ -19,8 +21,8 @@ This repo has **two separate package.json files** with different runtimes:
 ```sh
 npm run build        # tsc compile
 npm test             # jest (CDK snapshot tests in test/*.test.ts)
-npx cdk deploy --outputs-file cdk-outputs.json   # deploy stack to AWS
-npx cdk synth        # synthesize CloudFormation template
+npx cdk deploy --outputs-file cdk-outputs.json
+npx cdk synth
 ```
 
 ### Deploying and running benchmarks
@@ -28,42 +30,57 @@ npx cdk synth        # synthesize CloudFormation template
 # After deploy, extract Lambda ARNs as env vars:
 jq -r '.NodeBunDenoStack | to_entries[] | "\(.key)=\(.value)"' cdk-outputs.json > .env
 
-# Run benchmark (uses bun, reads .env for Lambda function ARNs):
+# Run all runtimes (default 50 iterations):
 bun run test/benchmark/index.ts
-ITERATIONS=100 bun run test/benchmark/index.ts
+
+# Run specific runtimes or change iteration count:
+ITERATIONS=100 bun run test/benchmark/index.ts bun deno nodejs
 ```
 
 ### Generating test fixtures
 ```sh
-bun run test/fakerdata/generateFaker.ts          # JWT payloads
-bun run test/fakerdata/generateLargeJson.ts      # large JSON
+bun run test/fakerdata/generateFaker.ts           # JWT payloads
+bun run test/fakerdata/generateLargeJson.ts       # large JSON
 bun run test/fakerdata/generateCompressionData.ts
 ```
 
 ## Architecture
 
-### Lambda Handler Pattern (src/bun/)
+### Three Runtime Patterns
 
-Each handler is a native `Bun.serve()` HTTP server on port 8080. The Docker image bundles [`aws-lambda-adapter`](https://github.com/awslabs/aws-lambda-web-adapter) (LWA) which translates Lambda invocation events into HTTP requests — so the handler never uses the Lambda event/context API directly.
+**Bun & Deno — Docker + LWA (AWS Lambda Web Adapter)**
+
+Each handler is an HTTP server (port 8080). The Docker image bundles `aws-lambda-adapter` (LWA) which translates Lambda invocations into HTTP requests, so handlers never touch the Lambda event/context API directly.
 
 ```
-Lambda Invoke → LWA (port 8080) → Bun.serve() handler → HTTP response → LWA → Lambda response
+Lambda Invoke → LWA (port 8080) → Bun.serve() / Deno.serve() → HTTP response → LWA → Lambda response
 ```
 
 GET requests return `"OK"` for the LWA readiness check (`AWS_LWA_READINESS_CHECK_PATH=/`).
 
-### CDK Stack (lib/node-bun-deno-stack.ts)
+- Bun: `Bun.serve({ port: 8080, fetch(req) { ... } })`
+- Deno: `Deno.serve({ port: 8080, handler: async (req) => { ... } })`; uses `node:` prefixed imports for Node compat modules (crypto, buffer)
 
-`BunLambda` is a CDK Construct wrapping a `DockerImageFunction` built from `src/bun/`. The `handler` prop sets the `CMD` passed to bun (e.g. `"jwtSign/index.ts"`). Lambda functions are chained as dependencies to avoid IAM race conditions during deployment.
+**Node — Managed Lambda Runtime**
 
-### Benchmark Runner (test/benchmark/index.ts)
+Node handlers use the standard Lambda export pattern (`export const handler = async (event) => ...`) and are deployed using `NodejsFunction` (esbuild bundled, Node 24.x). No Docker or LWA involved.
 
-Reads Lambda ARNs from env vars (populated from `cdk-outputs.json` via `.env`). Invokes each function sequentially via `@aws-sdk/client-lambda` and logs progress every 10 iterations.
+### Deno Dockerfile Build Strategy
 
-### Branches
+The Deno Dockerfile pre-compiles and caches all handlers at image build time to minimize cold starts:
+1. `deno cache` — downloads all npm deps into `DENO_DIR=/var/deno_dir`
+2. Warmup runs — starts each handler with a 10s timeout so Deno fully JIT-compiles and caches code (exit 124 = timeout = success)
 
-- `main` — baseline
-- `jwt` — JWT benchmark work
-- `deno` — Deno runtime implementation (current)
+Deno functions have a 15s Lambda timeout (vs 10s default for Bun).
 
-Deno handlers (when added) will follow the same pattern as `src/bun/` but in `src/deno/`.
+### CDK Stack (`lib/node-bun-deno-stack.ts`)
+
+`ContainerLambda` is a CDK Construct wrapping `DockerImageFunction` used for both Bun and Deno. The `cmd` prop overrides the Dockerfile `CMD` to select the handler (e.g. `["bun", "jwtSign/index.ts"]`).
+
+`NodeLambda` wraps `NodejsFunction` with esbuild bundling for the managed Node runtime.
+
+Lambda functions are chained as CDK dependencies to avoid IAM race conditions during deployment.
+
+### Benchmark Runner (`test/benchmark/index.ts`)
+
+Reads Lambda ARNs from env vars (populated from `cdk-outputs.json` via `.env`). Invokes each function sequentially via `@aws-sdk/client-lambda`. Accepts runtime names as CLI args (`bun`, `deno`, `nodejs`); runs all three if none provided. Logs progress every 10 iterations.

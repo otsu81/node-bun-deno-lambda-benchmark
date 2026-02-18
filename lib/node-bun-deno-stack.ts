@@ -5,48 +5,33 @@ import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as path from "path";
 
-interface LambdaProps {
-  handler: string;
+interface BaseLambdaProps {
   memorySize?: number;
   timeout?: cdk.Duration;
 }
 
-class BunLambda extends Construct {
-  public readonly fn: lambda.DockerImageFunction;
-
-  constructor(scope: Construct, id: string, props: LambdaProps) {
-    super(scope, id);
-
-    this.fn = new lambda.DockerImageFunction(this, "Fn", {
-      code: lambda.DockerImageCode.fromImageAsset("src/bun", {
-        platform: Platform.LINUX_AMD64,
-        cmd: ["bun", props.handler],
-      }),
-      architecture: lambda.Architecture.X86_64,
-      memorySize: props.memorySize ?? 128,
-      timeout: props.timeout ?? cdk.Duration.seconds(3),
-      environment: {
-        AWS_LWA_READINESS_CHECK_PATH: "/",
-        AWS_LWA_INVOKE_MODE: "buffered",
-      },
-    });
-  }
+interface ContainerLambdaProps extends BaseLambdaProps {
+  handler: string;
+  imagePath: string;
+  file: string;
+  cmdPrefix: string[];
 }
 
-class DenoLambda extends Construct {
+class ContainerLambda extends Construct {
   public readonly fn: lambda.DockerImageFunction;
 
-  constructor(scope: Construct, id: string, props: LambdaProps) {
+  constructor(scope: Construct, id: string, props: ContainerLambdaProps) {
     super(scope, id);
 
     this.fn = new lambda.DockerImageFunction(this, "Fn", {
-      code: lambda.DockerImageCode.fromImageAsset("src/deno", {
+      code: lambda.DockerImageCode.fromImageAsset(props.imagePath, {
         platform: Platform.LINUX_AMD64,
-        cmd: ["deno", "run", "--allow-all", props.handler],
+        cmd: [...props.cmdPrefix, props.handler],
+        file: props.file,
       }),
       architecture: lambda.Architecture.X86_64,
       memorySize: props.memorySize ?? 128,
-      timeout: props.timeout ?? cdk.Duration.seconds(15),
+      timeout: props.timeout ?? cdk.Duration.seconds(10), // Default from Bun ex
       environment: {
         AWS_LWA_READINESS_CHECK_PATH: "/",
         AWS_LWA_INVOKE_MODE: "buffered",
@@ -71,7 +56,7 @@ class NodeLambda extends Construct {
       runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.X86_64,
       memorySize: props.memorySize ?? 128,
-      timeout: props.timeout ?? cdk.Duration.seconds(3),
+      timeout: props.timeout ?? cdk.Duration.seconds(10),
       depsLockFilePath: path.join(__dirname, "../package-lock.json"),
       bundling: {
         minify: true,
@@ -83,24 +68,42 @@ class NodeLambda extends Construct {
   }
 }
 
+const baseBunProps = {
+  imagePath: "src",
+  file: "bun/Dockerfile",
+  cmdPrefix: ["bun"],
+};
+
+const baseDenoProps = {
+  imagePath: "src",
+  file: "deno/Dockerfile",
+  cmdPrefix: ["deno", "run", "--allow-all"],
+  timeout: cdk.Duration.seconds(15),
+};
+
 export class NodeBunDenoStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const sign = new BunLambda(this, "BunJwtSign", {
-      handler: "jwtSign/index.ts",
+    const sign = new ContainerLambda(this, "BunJwtSign", {
+      ...baseBunProps,
+      handler: "dist/jwtSign.js",
     });
-    const validate = new BunLambda(this, "BunJwtValidate", {
-      handler: "jwtValidate/index.ts",
+    const validate = new ContainerLambda(this, "BunJwtValidate", {
+      ...baseBunProps,
+      handler: "dist/jwtValidate.js",
     });
-    const jsonProcess = new BunLambda(this, "BunJsonProcess", {
-      handler: "jsonProcess/index.ts",
+    const jsonProcess = new ContainerLambda(this, "BunJsonProcess", {
+      ...baseBunProps,
+      handler: "dist/jsonProcess.js",
     });
-    const compression = new BunLambda(this, "BunCompression", {
-      handler: "compression/index.ts",
+    const compression = new ContainerLambda(this, "BunCompression", {
+      ...baseBunProps,
+      handler: "dist/compression.js",
     });
-    const arrayOps = new BunLambda(this, "BunArrayOps", {
-      handler: "arrayOps/index.ts",
+    const arrayOps = new ContainerLambda(this, "BunArrayOps", {
+      ...baseBunProps,
+      handler: "dist/arrayOps.js",
     });
 
     // Chain dependencies to avoid IAM race condition
@@ -124,19 +127,24 @@ export class NodeBunDenoStack extends cdk.Stack {
     });
 
     // Deno lambdas
-    const denoSign = new DenoLambda(this, "DenoJwtSign", {
+    const denoSign = new ContainerLambda(this, "DenoJwtSign", {
+      ...baseDenoProps,
       handler: "jwtSign/index.ts",
     });
-    const denoValidate = new DenoLambda(this, "DenoJwtValidate", {
+    const denoValidate = new ContainerLambda(this, "DenoJwtValidate", {
+      ...baseDenoProps,
       handler: "jwtValidate/index.ts",
     });
-    const denoJsonProcess = new DenoLambda(this, "DenoJsonProcess", {
+    const denoJsonProcess = new ContainerLambda(this, "DenoJsonProcess", {
+      ...baseDenoProps,
       handler: "jsonProcess/index.ts",
     });
-    const denoCompression = new DenoLambda(this, "DenoCompression", {
+    const denoCompression = new ContainerLambda(this, "DenoCompression", {
+      ...baseDenoProps,
       handler: "compression/index.ts",
     });
-    const denoArrayOps = new DenoLambda(this, "DenoArrayOps", {
+    const denoArrayOps = new ContainerLambda(this, "DenoArrayOps", {
+      ...baseDenoProps,
       handler: "arrayOps/index.ts",
     });
 
@@ -184,10 +192,20 @@ export class NodeBunDenoStack extends cdk.Stack {
     nodeCompression.node.addDependency(nodeJsonProcess);
     nodeArrayOps.node.addDependency(nodeCompression);
 
-    new cdk.CfnOutput(this, "SignNodeFunction", { value: nodeSign.fn.functionArn });
-    new cdk.CfnOutput(this, "ValidateNodeFunction", { value: nodeValidate.fn.functionArn });
-    new cdk.CfnOutput(this, "JsonProcessNodeFunction", { value: nodeJsonProcess.fn.functionArn });
-    new cdk.CfnOutput(this, "CompressionNodeFunction", { value: nodeCompression.fn.functionArn });
-    new cdk.CfnOutput(this, "ArrayOpsNodeFunction", { value: nodeArrayOps.fn.functionArn });
+    new cdk.CfnOutput(this, "SignNodeFunction", {
+      value: nodeSign.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "ValidateNodeFunction", {
+      value: nodeValidate.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "JsonProcessNodeFunction", {
+      value: nodeJsonProcess.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "CompressionNodeFunction", {
+      value: nodeCompression.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "ArrayOpsNodeFunction", {
+      value: nodeArrayOps.fn.functionArn,
+    });
   }
 }

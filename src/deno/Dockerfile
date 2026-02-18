@@ -10,8 +10,10 @@ ENV PORT=8080
 RUN mkdir /var/deno_dir
 ENV DENO_DIR=/var/deno_dir
 
-WORKDIR "/var/task"
-COPY . /var/task
+WORKDIR /var/task/deno
+
+COPY deno/ ./
+COPY common/ ../common/
 
 # Download and cache all npm deps into the image (fails build if unreachable)
 RUN deno cache jwtSign/index.ts jwtValidate/index.ts jsonProcess/index.ts compression/index.ts arrayOps/index.ts

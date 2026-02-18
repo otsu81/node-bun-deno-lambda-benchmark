@@ -1,32 +1,6 @@
-import * as z from "zod";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { InputSchema, compress, type CompressionResult } from "../../common/compression.ts";
 
-const InputSchema = z.object({
-  data: z.string(), // base64 encoded
-});
-
-export const handler = async (
-  event: unknown,
-): Promise<{
-  originalSize: number;
-  compressedSize: number;
-  decompressedSize: number;
-  ratio: string;
-}> => {
+export const handler = async (event: unknown): Promise<CompressionResult> => {
   const { data } = InputSchema.parse(event);
-
-  const input = Buffer.from(data, "base64");
-  const compressed = gzipSync(input);
-  const decompressed = gunzipSync(compressed);
-
-  if (decompressed.length !== input.length) {
-    throw new Error("Decompression mismatch");
-  }
-
-  return {
-    originalSize: input.length,
-    compressedSize: compressed.length,
-    decompressedSize: decompressed.length,
-    ratio: (compressed.length / input.length).toFixed(3),
-  };
+  return compress(data);
 };

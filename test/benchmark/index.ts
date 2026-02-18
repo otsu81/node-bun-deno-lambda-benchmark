@@ -1,4 +1,4 @@
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { LambdaClient, InvokeCommand, LogType } from "@aws-sdk/client-lambda";
 import jwtPayloads from "../fakerdata/generatedJson/jwtPayloads.json";
 import compressionData from "../fakerdata/generatedJson/compressionData.json";
 import largeJson from "../fakerdata/generatedJson/largeJson.json";
@@ -44,13 +44,25 @@ async function invoke(functionName: string, payload: unknown): Promise<unknown> 
   const command = new InvokeCommand({
     FunctionName: functionName,
     Payload: Buffer.from(JSON.stringify(payload)),
+    LogType: LogType.Tail,
   });
 
   const response = await lambda.send(command);
 
   if (response.FunctionError) {
-    const errorPayload = Buffer.from(response.Payload!).toString();
-    throw new Error(`Lambda error: ${response.FunctionError} - ${errorPayload}`);
+    const fnLabel = functionName.split(":").at(-1) ?? functionName;
+    const raw = Buffer.from(response.Payload!).toString();
+    let detail: string;
+    try {
+      const parsed = JSON.parse(raw);
+      detail = parsed.errorMessage ?? raw;
+    } catch {
+      detail = raw;
+    }
+    const logs = response.LogResult
+      ? "\n" + Buffer.from(response.LogResult, "base64").toString()
+      : "";
+    throw new Error(`[${fnLabel}] ${response.FunctionError}: ${detail}${logs}`);
   }
 
   return JSON.parse(Buffer.from(response.Payload!).toString());
