@@ -41,14 +41,34 @@ export class NodeBunDenoStack extends cdk.Stack {
     const validate = new BunLambda(this, "BunJwtValidate", {
       handler: "jwtValidate/index.ts",
     });
-
-    validate.node.addDependency(sign);
-
-    new cdk.CfnOutput(this, "SignBunFunction", {
-      value: sign.fn.functionArn,
+    const jsonProcess = new BunLambda(this, "BunJsonProcess", {
+      handler: "jsonProcess/index.ts",
     });
+    const compression = new BunLambda(this, "BunCompression", {
+      handler: "compression/index.ts",
+    });
+    const arrayOps = new BunLambda(this, "BunArrayOps", {
+      handler: "arrayOps/index.ts",
+    });
+
+    // Chain dependencies to avoid IAM race condition
+    validate.node.addDependency(sign);
+    jsonProcess.node.addDependency(validate);
+    compression.node.addDependency(jsonProcess);
+    arrayOps.node.addDependency(compression);
+
+    new cdk.CfnOutput(this, "SignBunFunction", { value: sign.fn.functionArn });
     new cdk.CfnOutput(this, "ValidateBunFunction", {
       value: validate.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "JsonProcessBunFunction", {
+      value: jsonProcess.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "CompressionBunFunction", {
+      value: compression.fn.functionArn,
+    });
+    new cdk.CfnOutput(this, "ArrayOpsBunFunction", {
+      value: arrayOps.fn.functionArn,
     });
   }
 }

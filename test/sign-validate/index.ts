@@ -1,5 +1,5 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
-import payloads from "../fakerdata/jwtPayloads.json";
+import payloads from "../fakerdata/generatedJson/jwtPayloads.json";
 
 const { SIGN_FUNCTION, VALIDATE_FUNCTION } = process.env;
 if (!SIGN_FUNCTION || !VALIDATE_FUNCTION)
