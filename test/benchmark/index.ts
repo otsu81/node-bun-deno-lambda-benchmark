@@ -40,14 +40,17 @@ const configs: Partial<Record<Runtime, RuntimeConfig>> = {
 
 const lambda = new LambdaClient({});
 
-async function invoke(functionName: string, payload: unknown): Promise<unknown> {
-  const command = new InvokeCommand({
-    FunctionName: functionName,
-    Payload: Buffer.from(JSON.stringify(payload)),
-    LogType: LogType.Tail,
-  });
-
-  const response = await lambda.send(command);
+async function invoke(
+  functionName: string,
+  payload: unknown,
+): Promise<unknown> {
+  const response = await lambda.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      Payload: Buffer.from(JSON.stringify(payload)),
+      LogType: LogType.Tail,
+    }),
+  );
 
   if (response.FunctionError) {
     const fnLabel = functionName.split(":").at(-1) ?? functionName;
@@ -68,108 +71,98 @@ async function invoke(functionName: string, payload: unknown): Promise<unknown> 
   return JSON.parse(Buffer.from(response.Payload!).toString());
 }
 
-async function runJwt(runtime: Runtime, iterations: number): Promise<number | null> {
-  const cfg = configs[runtime];
-  if (!cfg?.signFn || !cfg.validateFn) {
-    console.log(`  [${runtime}] skipping - not configured`);
-    return null;
-  }
-
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    const payload = jwtPayloads[i % jwtPayloads.length];
-    const signResult = await invoke(cfg.signFn, payload);
-    await invoke(cfg.validateFn, signResult);
-    if ((i + 1) % 10 === 0) console.log(`  [${runtime}] JWT: ${i + 1}/${iterations}`);
-  }
-  return performance.now() - start;
+interface BenchmarkDef {
+  label: string;
+  isReady: (cfg: RuntimeConfig) => boolean;
+  step: (cfg: RuntimeConfig, i: number) => Promise<unknown>;
 }
 
-async function runJsonProcess(runtime: Runtime, iterations: number): Promise<number | null> {
-  const cfg = configs[runtime];
-  if (!cfg?.jsonProcessFn) {
-    console.log(`  [${runtime}] skipping - not configured`);
-    return null;
-  }
+const jsonPayload = { raw: JSON.stringify(largeJson) };
 
-  const payload = { raw: JSON.stringify(largeJson) };
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    const result = await invoke(cfg.jsonProcessFn, payload);
-    if ((i + 1) % 10 === 0) console.log(`  [${runtime}] JSON: ${i + 1}/${iterations}`, result);
-  }
-  return performance.now() - start;
-}
+const BENCHMARKS: BenchmarkDef[] = [
+  {
+    label: "JWT Sign/Validate",
+    isReady: (cfg) => !!(cfg.signFn && cfg.validateFn),
+    step: async (cfg, i) => {
+      const result = await invoke(
+        cfg.signFn!,
+        jwtPayloads[i % jwtPayloads.length],
+      );
+      return invoke(cfg.validateFn!, result);
+    },
+  },
+  {
+    label: "JSON Process",
+    isReady: (cfg) => !!cfg.jsonProcessFn,
+    step: (cfg) => invoke(cfg.jsonProcessFn!, jsonPayload),
+  },
+  {
+    label: "Compression",
+    isReady: (cfg) => !!cfg.compressionFn,
+    step: (cfg) => invoke(cfg.compressionFn!, compressionData),
+  },
+  {
+    label: "Array Operations",
+    isReady: (cfg) => !!cfg.arrayOpsFn,
+    step: (cfg, i) => invoke(cfg.arrayOpsFn!, { size: 100000, seed: i }),
+  },
+];
 
-async function runCompression(runtime: Runtime, iterations: number): Promise<number | null> {
-  const cfg = configs[runtime];
-  if (!cfg?.compressionFn) {
-    console.log(`  [${runtime}] skipping - not configured`);
-    return null;
-  }
-
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    const result = await invoke(cfg.compressionFn, compressionData);
-    if ((i + 1) % 10 === 0)
-      console.log(`  [${runtime}] Compression: ${i + 1}/${iterations}`, result);
-  }
-  return performance.now() - start;
-}
-
-async function runArrayOps(runtime: Runtime, iterations: number): Promise<number | null> {
-  const cfg = configs[runtime];
-  if (!cfg?.arrayOpsFn) {
-    console.log(`  [${runtime}] skipping - not configured`);
-    return null;
-  }
-
-  const start = performance.now();
-  for (let i = 0; i < iterations; i++) {
-    const result = await invoke(cfg.arrayOpsFn, { size: 100000, seed: i });
-    if ((i + 1) % 10 === 0)
-      console.log(`  [${runtime}] ArrayOps: ${i + 1}/${iterations}`, result);
-  }
-  return performance.now() - start;
-}
-
-function printResults(label: string, results: Record<Runtime, number | null>) {
-  console.log(`\n  Results (${label}):`);
-  for (const [runtime, ms] of Object.entries(results) as [Runtime, number | null][]) {
-    if (ms !== null) console.log(`    ${runtime}: ${(ms / 1000).toFixed(2)}s`);
-  }
-}
-
-async function benchmark(
-  label: string,
+async function runBenchmark(
+  def: BenchmarkDef,
   runtimes: Runtime[],
   iterations: number,
-  fn: (runtime: Runtime, iterations: number) => Promise<number | null>,
 ) {
-  console.log(`\n=== ${label} (${iterations} iterations) ===`);
-  const results = {} as Record<Runtime, number | null>;
+  console.log(`\n=== ${def.label} (${iterations} iterations) ===`);
+  const results: Partial<Record<Runtime, number | null>> = {};
+
   for (const runtime of runtimes) {
-    results[runtime] = await fn(runtime, iterations);
+    const cfg = configs[runtime];
+    if (!cfg || !def.isReady(cfg)) {
+      console.log(`  [${runtime}] skipping - not configured`);
+      results[runtime] = null;
+      continue;
+    }
+
+    const start = performance.now();
+    for (let i = 0; i < iterations; i++) {
+      await def.step(cfg, i);
+      if ((i + 1) % 10 === 0)
+        console.log(`  [${runtime}] ${def.label}: ${i + 1}/${iterations}`);
+    }
+    results[runtime] = performance.now() - start;
   }
-  printResults(label, results);
+
+  console.log(`\n  Results (${def.label}):`);
+  for (const runtime of runtimes) {
+    const ms = results[runtime];
+    if (ms != null) {
+      console.log(
+        `    ${runtime}: ${(ms / 1000).toFixed(2)}s  (${(ms / iterations).toFixed(0)}ms/iter)`,
+      );
+    }
+  }
 }
 
 async function main() {
   const iterations = parseInt(process.env.ITERATIONS || "50", 10);
-
   const argRuntimes = process.argv
     .slice(2)
-    .filter((a) => (VALID_RUNTIMES as readonly string[]).includes(a)) as Runtime[];
-  const selectedRuntimes = argRuntimes.length > 0 ? argRuntimes : (["bun", "deno", "nodejs"] as Runtime[]);
+    .filter((a) =>
+      (VALID_RUNTIMES as readonly string[]).includes(a),
+    ) as Runtime[];
+  const selectedRuntimes =
+    argRuntimes.length > 0
+      ? argRuntimes
+      : (["bun", "deno", "nodejs"] as Runtime[]);
 
   console.log("Starting benchmark suite");
-  console.log(`Iterations per benchmark: ${iterations}`);
-  console.log(`Runtimes: ${selectedRuntimes.join(", ")}`);
+  console.log(`Iterations: ${iterations}`);
+  console.log(`Runtimes:   ${selectedRuntimes.join(", ")}`);
 
-  await benchmark("JWT Sign/Validate", selectedRuntimes, iterations, runJwt);
-  await benchmark("JSON Process", selectedRuntimes, iterations, runJsonProcess);
-  await benchmark("Compression", selectedRuntimes, iterations, runCompression);
-  await benchmark("Array Operations", selectedRuntimes, iterations, runArrayOps);
+  for (const def of BENCHMARKS) {
+    await runBenchmark(def, selectedRuntimes, iterations);
+  }
 
   console.log("\n=== Benchmark complete ===");
 }
