@@ -7,8 +7,9 @@ Bun.serve({
   async fetch(req) {
     if (req.method === "GET") return new Response("OK");
 
-    const payload = JwtPayloadSchema.parse(await req.json());
-
+    const body = await req.json();
+    const start = performance.now();
+    const payload = JwtPayloadSchema.parse(body);
     const jwt = await new jose.SignJWT(payload)
       .setProtectedHeader({ alg: "ES256", kid: KEY_ID })
       .setIssuer(ISSUER)
@@ -18,8 +19,9 @@ Bun.serve({
       .setExpirationTime("12h")
       .setJti(randomUUID())
       .sign(privateKey);
+    const durationMs = performance.now() - start;
 
-    return new Response(JSON.stringify({ token: jwt }), {
+    return new Response(JSON.stringify({ token: jwt, durationMs }), {
       headers: { "Content-Type": "application/json" },
     });
   },

@@ -5,10 +5,13 @@ Deno.serve({
   handler: async (req) => {
     if (req.method === "GET") return new Response("OK");
 
-    const { data } = InputSchema.parse(await req.json());
+    const body = await req.json();
+    const start = performance.now();
+    const { data } = InputSchema.parse(body);
     const result = compress(data);
+    const durationMs = performance.now() - start;
 
-    return new Response(JSON.stringify(result), {
+    return new Response(JSON.stringify({ ...result, durationMs }), {
       headers: { "Content-Type": "application/json" },
     });
   },

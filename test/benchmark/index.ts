@@ -74,7 +74,7 @@ async function invoke(
 interface BenchmarkDef {
   label: string;
   isReady: (cfg: RuntimeConfig) => boolean;
-  step: (cfg: RuntimeConfig, i: number) => Promise<unknown>;
+  step: (cfg: RuntimeConfig, i: number) => Promise<number>;
 }
 
 const jsonPayload = { raw: JSON.stringify(largeJson) };
@@ -84,27 +84,34 @@ const BENCHMARKS: BenchmarkDef[] = [
     label: "JWT Sign/Validate",
     isReady: (cfg) => !!(cfg.signFn && cfg.validateFn),
     step: async (cfg, i) => {
-      const result = await invoke(
-        cfg.signFn!,
-        jwtPayloads[i % jwtPayloads.length],
-      );
-      return invoke(cfg.validateFn!, result);
+      const signRes = await invoke(cfg.signFn!, jwtPayloads[i % jwtPayloads.length]) as { token: string; durationMs: number };
+      const valRes = await invoke(cfg.validateFn!, signRes) as { durationMs: number };
+      return signRes.durationMs + valRes.durationMs;
     },
   },
   {
     label: "JSON Process",
     isReady: (cfg) => !!cfg.jsonProcessFn,
-    step: (cfg) => invoke(cfg.jsonProcessFn!, jsonPayload),
+    step: async (cfg) => {
+      const res = await invoke(cfg.jsonProcessFn!, jsonPayload) as { durationMs: number };
+      return res.durationMs;
+    },
   },
   {
     label: "Compression",
     isReady: (cfg) => !!cfg.compressionFn,
-    step: (cfg) => invoke(cfg.compressionFn!, compressionData),
+    step: async (cfg) => {
+      const res = await invoke(cfg.compressionFn!, compressionData) as { durationMs: number };
+      return res.durationMs;
+    },
   },
   {
     label: "Array Operations",
     isReady: (cfg) => !!cfg.arrayOpsFn,
-    step: (cfg, i) => invoke(cfg.arrayOpsFn!, { size: 100000, seed: i }),
+    step: async (cfg, i) => {
+      const res = await invoke(cfg.arrayOpsFn!, { size: 100000, seed: i }) as { durationMs: number };
+      return res.durationMs;
+    },
   },
 ];
 
@@ -114,31 +121,29 @@ async function runBenchmark(
   iterations: number,
 ) {
   console.log(`\n=== ${def.label} (${iterations} iterations) ===`);
-  const results: Partial<Record<Runtime, number | null>> = {};
+  const entries = await Promise.all(
+    runtimes.map(async (runtime) => {
+      const cfg = configs[runtime];
+      if (!cfg || !def.isReady(cfg)) {
+        console.log(`  [${runtime}] skipping - not configured`);
+        return [runtime, null] as const;
+      }
 
-  for (const runtime of runtimes) {
-    const cfg = configs[runtime];
-    if (!cfg || !def.isReady(cfg)) {
-      console.log(`  [${runtime}] skipping - not configured`);
-      results[runtime] = null;
-      continue;
-    }
-
-    const start = performance.now();
-    for (let i = 0; i < iterations; i++) {
-      await def.step(cfg, i);
-      if ((i + 1) % 10 === 0)
-        console.log(`  [${runtime}] ${def.label}: ${i + 1}/${iterations}`);
-    }
-    results[runtime] = performance.now() - start;
-  }
+      let totalMs = 0;
+      for (let i = 0; i < iterations; i++) {
+        totalMs += await def.step(cfg, i);
+        if ((i + 1) % 10 === 0)
+          console.log(`  [${runtime}] ${def.label}: ${i + 1}/${iterations}`);
+      }
+      return [runtime, totalMs] as const;
+    }),
+  );
 
   console.log(`\n  Results (${def.label}):`);
-  for (const runtime of runtimes) {
-    const ms = results[runtime];
+  for (const [runtime, ms] of entries) {
     if (ms != null) {
       console.log(
-        `    ${runtime}: ${(ms / 1000).toFixed(2)}s  (${(ms / iterations).toFixed(0)}ms/iter)`,
+        `    ${runtime}: ${(ms / 1000).toFixed(2)}s total  (${(ms / iterations).toFixed(1)}ms/iter, computation only)`,
       );
     }
   }
