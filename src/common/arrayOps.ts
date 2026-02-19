@@ -18,6 +18,7 @@ export interface ArrayOpsResult {
   totalScore: string;
   groupedCounts: Record<string, number>;
   topItem: { id: number; score: string } | null;
+  durationMs?: number;
 }
 
 export function runArrayOps(size: number, seed?: number): ArrayOpsResult {
@@ -50,6 +51,8 @@ export function runArrayOps(size: number, seed?: number): ArrayOpsResult {
     filteredSize: filtered.length,
     totalScore: total.toFixed(2),
     groupedCounts: grouped,
-    topItem: sorted[0] ? { id: sorted[0].id, score: sorted[0].score.toFixed(2) } : null,
+    topItem: sorted[0]
+      ? { id: sorted[0].id, score: sorted[0].score.toFixed(2) }
+      : null,
   };
 }

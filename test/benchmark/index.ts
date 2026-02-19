@@ -3,7 +3,7 @@ import jwtPayloads from "../fakerdata/generatedJson/jwtPayloads.json";
 import compressionData from "../fakerdata/generatedJson/compressionData.json";
 import largeJson from "../fakerdata/generatedJson/largeJson.json";
 
-const VALID_RUNTIMES = ["bun", "deno", "nodejs"] as const;
+const VALID_RUNTIMES = ["bun", "deno", "nodejs", "go"] as const;
 type Runtime = (typeof VALID_RUNTIMES)[number];
 
 interface RuntimeConfig {
@@ -35,6 +35,9 @@ const configs: Partial<Record<Runtime, RuntimeConfig>> = {
     jsonProcessFn: process.env.JsonProcessNodeFunction,
     compressionFn: process.env.CompressionNodeFunction,
     arrayOpsFn: process.env.ArrayOpsNodeFunction,
+  },
+  go: {
+    arrayOpsFn: process.env.ArrayOpsGoFunction,
   },
 };
 
@@ -159,7 +162,7 @@ async function main() {
   const selectedRuntimes =
     argRuntimes.length > 0
       ? argRuntimes
-      : (["bun", "deno", "nodejs"] as Runtime[]);
+      : (["bun", "deno", "nodejs", "go"] as Runtime[]);
 
   console.log("Starting benchmark suite");
   console.log(`Iterations: ${iterations}`);

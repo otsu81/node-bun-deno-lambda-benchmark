@@ -4,6 +4,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import * as path from "path";
+import { GoFunction } from "@aws-cdk/aws-lambda-go-alpha";
 
 interface BaseLambdaProps {
   memorySize?: number;
@@ -64,6 +65,23 @@ class NodeLambda extends Construct {
         target: "node24",
         externalModules: [],
       },
+    });
+  }
+}
+
+class GoLambda extends Construct {
+  public readonly fn: GoFunction;
+  constructor(
+    scope: Construct,
+    id: string,
+    props: { entry: string; memorySize?: number; timeout?: cdk.Duration },
+  ) {
+    super(scope, id);
+    this.fn = new GoFunction(this, "Fn", {
+      entry: props.entry,
+      architecture: lambda.Architecture.X86_64,
+      memorySize: props.memorySize ?? 128,
+      timeout: props.timeout ?? cdk.Duration.seconds(10),
     });
   }
 }
@@ -192,6 +210,10 @@ export class NodeBunDenoStack extends cdk.Stack {
     nodeCompression.node.addDependency(nodeJsonProcess);
     nodeArrayOps.node.addDependency(nodeCompression);
 
+    const goArrayOps = new GoLambda(this, "GoArrayOps", {
+      entry: path.join(__dirname, "../src/go/arrayOps"),
+    });
+
     new cdk.CfnOutput(this, "SignNodeFunction", {
       value: nodeSign.fn.functionArn,
     });
@@ -206,6 +228,10 @@ export class NodeBunDenoStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, "ArrayOpsNodeFunction", {
       value: nodeArrayOps.fn.functionArn,
+    });
+
+    new cdk.CfnOutput(this, "ArrayOpsGoFunction", {
+      value: goArrayOps.fn.functionArn,
     });
   }
 }
