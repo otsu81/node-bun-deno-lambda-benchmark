@@ -4,8 +4,10 @@ import compressionData from "../fakerdata/generatedJson/compressionData.json"
 import jwtPayloads from "../fakerdata/generatedJson/jwtPayloads.json"
 import largeJson from "../fakerdata/generatedJson/largeJson.json"
 
-const VALID_RUNTIMES = ["bun", "deno", "nodejs", "llrt", "go"] as const
-type Runtime = (typeof VALID_RUNTIMES)[number]
+type Runtime = "bun" | "deno" | "nodejs" | "llrt" | "go"
+const VALID_RUNTIMES: Runtime[] = ["bun", "deno", "nodejs", "llrt", "go"]
+const DEFAULT_RUNTIMES: Runtime[] = ["bun", "deno", "nodejs", "llrt", "go"]
+const RUNTIME_SET = new Set<Runtime>(VALID_RUNTIMES)
 
 interface RuntimeConfig {
   signFn?: string
@@ -15,37 +17,46 @@ interface RuntimeConfig {
   arrayOpsFn?: string
 }
 
-const configs: Partial<Record<Runtime, RuntimeConfig>> = {
+const runtimeEnvKeys: Record<Runtime, Partial<Record<keyof RuntimeConfig, string>>> = {
   bun: {
-    signFn: process.env.SignBunFunction,
-    validateFn: process.env.ValidateBunFunction,
-    jsonProcessFn: process.env.JsonProcessBunFunction,
-    compressionFn: process.env.CompressionBunFunction,
-    arrayOpsFn: process.env.ArrayOpsBunFunction,
+    signFn: "SignBunFunction",
+    validateFn: "ValidateBunFunction",
+    jsonProcessFn: "JsonProcessBunFunction",
+    compressionFn: "CompressionBunFunction",
+    arrayOpsFn: "ArrayOpsBunFunction",
   },
   deno: {
-    signFn: process.env.SignDenoFunction,
-    validateFn: process.env.ValidateDenoFunction,
-    jsonProcessFn: process.env.JsonProcessDenoFunction,
-    compressionFn: process.env.CompressionDenoFunction,
-    arrayOpsFn: process.env.ArrayOpsDenoFunction,
+    signFn: "SignDenoFunction",
+    validateFn: "ValidateDenoFunction",
+    jsonProcessFn: "JsonProcessDenoFunction",
+    compressionFn: "CompressionDenoFunction",
+    arrayOpsFn: "ArrayOpsDenoFunction",
   },
   nodejs: {
-    signFn: process.env.SignNodeFunction,
-    validateFn: process.env.ValidateNodeFunction,
-    jsonProcessFn: process.env.JsonProcessNodeFunction,
-    compressionFn: process.env.CompressionNodeFunction,
-    arrayOpsFn: process.env.ArrayOpsNodeFunction,
+    signFn: "SignNodeFunction",
+    validateFn: "ValidateNodeFunction",
+    jsonProcessFn: "JsonProcessNodeFunction",
+    compressionFn: "CompressionNodeFunction",
+    arrayOpsFn: "ArrayOpsNodeFunction",
   },
   llrt: {
-    jsonProcessFn: process.env.JsonProcessLlrtFunction,
-    compressionFn: process.env.CompressionLlrtFunction,
-    arrayOpsFn: process.env.ArrayOpsLlrtFunction,
+    jsonProcessFn: "JsonProcessLlrtFunction",
+    compressionFn: "CompressionLlrtFunction",
+    arrayOpsFn: "ArrayOpsLlrtFunction",
   },
   go: {
-    arrayOpsFn: process.env.ArrayOpsGoFunction,
+    arrayOpsFn: "ArrayOpsGoFunction",
   },
 }
+
+const configs: Record<Runtime, RuntimeConfig> = Object.fromEntries(
+  VALID_RUNTIMES.map((runtime) => {
+    const config = Object.fromEntries(
+      Object.entries(runtimeEnvKeys[runtime]).map(([key, envKey]) => [key, process.env[envKey]]),
+    ) as RuntimeConfig
+    return [runtime, config]
+  }),
+) as Record<Runtime, RuntimeConfig>
 
 const lambda = new LambdaClient({})
 
@@ -97,6 +108,12 @@ interface RuntimeStats {
 }
 
 const jsonPayload = { raw: JSON.stringify(largeJson) }
+type DurationResponse = { durationMs: number }
+
+async function invokeDuration(functionName: string, payload: unknown): Promise<number> {
+  const response = (await invoke(functionName, payload)) as DurationResponse
+  return response.durationMs
+}
 
 const BENCHMARKS: BenchmarkDef[] = [
   {
@@ -116,33 +133,21 @@ const BENCHMARKS: BenchmarkDef[] = [
   {
     label: "JSON Process",
     isReady: (cfg) => !!cfg.jsonProcessFn,
-    step: async (cfg) => {
-      const res = (await invoke(cfg.jsonProcessFn!, jsonPayload)) as {
-        durationMs: number
-      }
-      return res.durationMs
-    },
+    step: (cfg) => invokeDuration(cfg.jsonProcessFn!, jsonPayload),
   },
   {
     label: "Compression",
     isReady: (cfg) => !!cfg.compressionFn,
-    step: async (cfg) => {
-      const res = (await invoke(cfg.compressionFn!, compressionData)) as {
-        durationMs: number
-      }
-      return res.durationMs
-    },
+    step: (cfg) => invokeDuration(cfg.compressionFn!, compressionData),
   },
   {
     label: "Array Operations",
     isReady: (cfg) => !!cfg.arrayOpsFn,
-    step: async (cfg, i) => {
-      const res = (await invoke(cfg.arrayOpsFn!, {
+    step: (cfg, i) =>
+      invokeDuration(cfg.arrayOpsFn!, {
         size: 100000,
         seed: i,
-      })) as { durationMs: number }
-      return res.durationMs
-    },
+      }),
   },
 ]
 
@@ -197,10 +202,8 @@ async function runBenchmark(
 async function main() {
   const iterations = parseInt(process.env.ITERATIONS || "100", 10)
   const warmup = parseInt(process.env.WARMUP_ITERATIONS || "3", 10)
-  const argRuntimes = process.argv
-    .slice(2)
-    .filter((a) => (VALID_RUNTIMES as readonly string[]).includes(a)) as Runtime[]
-  const selectedRuntimes = argRuntimes.length > 0 ? argRuntimes : (["bun", "deno", "nodejs", "go"] as Runtime[])
+  const argRuntimes = process.argv.slice(2).filter((a): a is Runtime => RUNTIME_SET.has(a as Runtime))
+  const selectedRuntimes = argRuntimes.length > 0 ? argRuntimes : DEFAULT_RUNTIMES
 
   console.log("Starting benchmark suite")
   console.log(`Iterations: ${iterations}`)
