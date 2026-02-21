@@ -9,3 +9,4 @@ cdk.out
 .env
 cdk-outputs.json
 dist
+.tmp
