@@ -4,6 +4,7 @@ import { Platform } from "aws-cdk-lib/aws-ecr-assets"
 import * as lambda from "aws-cdk-lib/aws-lambda"
 import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs"
 import { CfnOutput, Duration, Stack, type StackProps } from "aws-cdk-lib/core"
+import { LlrtFunction } from "cdk-lambda-llrt"
 import { Construct } from "constructs"
 
 interface BaseLambdaProps {
@@ -98,6 +99,29 @@ class GoLambda extends Construct {
     }
 
     this.fn = new GoFunction(this, "Fn", {
+      entry,
+      architecture,
+      memorySize,
+      timeout,
+    })
+  }
+}
+
+class LlrtLambda extends Construct {
+  public readonly fn: LlrtFunction
+
+  constructor(scope: Construct, id: string, props: BaseLambdaProps) {
+    super(scope, id)
+    const { entry, ...rest } = props
+    if (typeof entry !== "string") {
+      throw new Error("entry point to lambda is not a string")
+    }
+    const { memorySize, timeout, architecture } = {
+      ...LAMBDA_DEFAULTS,
+      ...rest,
+    }
+
+    this.fn = new LlrtFunction(this, "Fn", {
       entry,
       architecture,
       memorySize,
@@ -230,10 +254,6 @@ export class NodeBunDenoStack extends Stack {
     nodeCompression.node.addDependency(nodeJsonProcess)
     nodeArrayOps.node.addDependency(nodeCompression)
 
-    const goArrayOps = new GoLambda(this, "GoArrayOps", {
-      entry: path.join(__dirname, "../src/go/arrayOps"),
-    })
-
     new CfnOutput(this, "SignNodeFunction", {
       value: nodeSign.fn.functionArn,
     })
@@ -248,6 +268,32 @@ export class NodeBunDenoStack extends Stack {
     })
     new CfnOutput(this, "ArrayOpsNodeFunction", {
       value: nodeArrayOps.fn.functionArn,
+    })
+
+    // llrt runtime lambdas
+    const llrtJsonProcess = new LlrtLambda(this, "LlrtJsonProcess", {
+      entry: path.join(__dirname, "../src/node/jsonProcess/index.ts"),
+    })
+    const llrtCompression = new LlrtLambda(this, "LlrtCompression", {
+      entry: path.join(__dirname, "../src/node/compression/index.ts"),
+    })
+    const llrtArrayOps = new LlrtLambda(this, "LlrtArrayOps", {
+      entry: path.join(__dirname, "../src/node/arrayOps/index.ts"),
+    })
+
+    new CfnOutput(this, "JsonProcessLlrtFunction", {
+      value: llrtJsonProcess.fn.functionArn,
+    })
+    new CfnOutput(this, "CompressionLlrtFunction", {
+      value: llrtCompression.fn.functionArn,
+    })
+    new CfnOutput(this, "ArrayOpsLlrtFunction", {
+      value: llrtArrayOps.fn.functionArn,
+    })
+
+    // go runtime lambdas
+    const goArrayOps = new GoLambda(this, "GoArrayOps", {
+      entry: path.join(__dirname, "../src/go/arrayOps"),
     })
 
     new CfnOutput(this, "ArrayOpsGoFunction", {
