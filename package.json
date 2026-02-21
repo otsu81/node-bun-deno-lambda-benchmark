@@ -8,10 +8,12 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "lint:fix": "biome check --write"
   },
   "devDependencies": {
     "@aws-cdk/aws-lambda-go-alpha": "^2.238.0-alpha.0",
+    "@biomejs/biome": "^2.4.4",
     "@types/jest": "^30",
     "@types/node": "^24.10.1",
     "aws-cdk": "^2.1106.1",

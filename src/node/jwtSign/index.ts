@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
-import * as jose from "jose";
-import { JwtPayloadSchema, privateKey, ISSUER, AUDIENCE, KEY_ID } from "../../common/jwt.ts";
+import { randomUUID } from "node:crypto"
+import * as jose from "jose"
+import { AUDIENCE, ISSUER, JwtPayloadSchema, KEY_ID, privateKey } from "../../common/jwt.ts"
 
 export const handler = async (event: unknown): Promise<{ token: string }> => {
-  const start = performance.now();
-  const payload = JwtPayloadSchema.parse(event);
+  const start = performance.now()
+  const payload = JwtPayloadSchema.parse(event)
   const jwt = await new jose.SignJWT(payload)
     .setProtectedHeader({ alg: "ES256", kid: KEY_ID })
     .setIssuer(ISSUER)
@@ -13,8 +13,8 @@ export const handler = async (event: unknown): Promise<{ token: string }> => {
     .setNotBefore("0s")
     .setExpirationTime("12h")
     .setJti(randomUUID())
-    .sign(privateKey);
-  const durationMs = performance.now() - start;
+    .sign(privateKey)
+  const durationMs = performance.now() - start
 
-  return { token: jwt, durationMs };
-};
+  return { token: jwt, durationMs }
+}

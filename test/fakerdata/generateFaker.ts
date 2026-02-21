@@ -1,4 +1,4 @@
-import { faker } from "@faker-js/faker";
+import { faker } from "@faker-js/faker"
 
 function getFakeJwtPayload() {
   return {
@@ -6,16 +6,13 @@ function getFakeJwtPayload() {
     email: faker.internet.email(),
     name: faker.person.fullName(),
     orgId: faker.string.uuid(),
-    roles: faker.helpers.arrayElements(
-      ["admin", "poweruser", "user", "editor", "viewer"],
-      { min: 1, max: 3 },
-    ),
-  };
+    roles: faker.helpers.arrayElements(["admin", "poweruser", "user", "editor", "viewer"], { min: 1, max: 3 }),
+  }
 }
 
-const fakery = [];
+const fakery = []
 for (let i = 0; i < 1000; i++) {
-  fakery.push(getFakeJwtPayload());
+  fakery.push(getFakeJwtPayload())
 }
 
-Bun.write("jwtPayloads.json", JSON.stringify(fakery, null, 2));
+Bun.write("jwtPayloads.json", JSON.stringify(fakery, null, 2))

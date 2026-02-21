@@ -1,40 +1,40 @@
-import * as z from "zod";
+import * as z from "zod"
 
 export const InputSchema = z.object({
   raw: z.string(),
-});
+})
 
 export interface Product {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  category: string;
-  tags: string[];
+  id: string
+  name: string
+  description: string
+  price: number
+  category: string
+  tags: string[]
   metadata: {
-    sku: string;
-    weight: number;
-    dimensions: { width: number; height: number; depth: number };
-    manufacturer: string;
-    inStock: boolean;
-  };
+    sku: string
+    weight: number
+    dimensions: { width: number; height: number; depth: number }
+    manufacturer: string
+    inStock: boolean
+  }
 }
 
 export interface Order {
-  id: string;
-  customerId: string;
-  customerName: string;
-  email: string;
-  items: { productId: string; quantity: number; unitPrice: number; total: number }[];
-  shipping: { address: string; city: string; country: string; postalCode: string };
-  status: string;
-  createdAt: string;
+  id: string
+  customerId: string
+  customerName: string
+  email: string
+  items: { productId: string; quantity: number; unitPrice: number; total: number }[]
+  shipping: { address: string; city: string; country: string; postalCode: string }
+  status: string
+  createdAt: string
 }
 
 export interface Payload {
-  products: Product[];
-  orders: Order[];
-  summary: { totalProducts: number; totalOrders: number; generatedAt: string };
+  products: Product[]
+  orders: Order[]
+  summary: { totalProducts: number; totalOrders: number; generatedAt: string }
 }
 
 export function transformPayload(data: Payload): Payload {
@@ -66,5 +66,5 @@ export function transformPayload(data: Payload): Payload {
       ...data.summary,
       generatedAt: new Date().toISOString(),
     },
-  };
+  }
 }

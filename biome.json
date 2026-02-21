@@ -1,0 +1,14 @@
+{
+  "formatter": {
+    "indentStyle": "space",
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "semicolons": "asNeeded"
+    }
+  },
+  "files": {
+    "includes": ["*/**", "!cdk.out", "!dist"]
+  }
+}
