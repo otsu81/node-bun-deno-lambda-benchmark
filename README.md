@@ -1,6 +1,6 @@
 # Bun vs Node vs Deno
 
-WIP
+This is a benchmark stack to measure runtime performance in AWS Lambda. You can find the associated blog post here.
 
 To run
 

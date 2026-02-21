@@ -14,7 +14,7 @@ interface BaseLambdaProps {
 }
 
 const LAMBDA_DEFAULTS = {
-  memorySize: 512,
+  memorySize: 1024,
   timeout: Duration.seconds(10),
   architecture: lambda.Architecture.X86_64,
 };

@@ -74,6 +74,16 @@ async function invoke(
   return JSON.parse(Buffer.from(response.Payload!).toString());
 }
 
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return lo === hi
+    ? sorted[lo]
+    : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
 interface BenchmarkDef {
   label: string;
   isReady: (cfg: RuntimeConfig) => boolean;
@@ -87,8 +97,13 @@ const BENCHMARKS: BenchmarkDef[] = [
     label: "JWT Sign/Validate",
     isReady: (cfg) => !!(cfg.signFn && cfg.validateFn),
     step: async (cfg, i) => {
-      const signRes = await invoke(cfg.signFn!, jwtPayloads[i % jwtPayloads.length]) as { token: string; durationMs: number };
-      const valRes = await invoke(cfg.validateFn!, signRes) as { durationMs: number };
+      const signRes = (await invoke(
+        cfg.signFn!,
+        jwtPayloads[i % jwtPayloads.length],
+      )) as { token: string; durationMs: number };
+      const valRes = (await invoke(cfg.validateFn!, signRes)) as {
+        durationMs: number;
+      };
       return signRes.durationMs + valRes.durationMs;
     },
   },
@@ -96,7 +111,9 @@ const BENCHMARKS: BenchmarkDef[] = [
     label: "JSON Process",
     isReady: (cfg) => !!cfg.jsonProcessFn,
     step: async (cfg) => {
-      const res = await invoke(cfg.jsonProcessFn!, jsonPayload) as { durationMs: number };
+      const res = (await invoke(cfg.jsonProcessFn!, jsonPayload)) as {
+        durationMs: number;
+      };
       return res.durationMs;
     },
   },
@@ -104,7 +121,9 @@ const BENCHMARKS: BenchmarkDef[] = [
     label: "Compression",
     isReady: (cfg) => !!cfg.compressionFn,
     step: async (cfg) => {
-      const res = await invoke(cfg.compressionFn!, compressionData) as { durationMs: number };
+      const res = (await invoke(cfg.compressionFn!, compressionData)) as {
+        durationMs: number;
+      };
       return res.durationMs;
     },
   },
@@ -112,7 +131,10 @@ const BENCHMARKS: BenchmarkDef[] = [
     label: "Array Operations",
     isReady: (cfg) => !!cfg.arrayOpsFn,
     step: async (cfg, i) => {
-      const res = await invoke(cfg.arrayOpsFn!, { size: 100000, seed: i }) as { durationMs: number };
+      const res = (await invoke(cfg.arrayOpsFn!, {
+        size: 100000,
+        seed: i,
+      })) as { durationMs: number };
       return res.durationMs;
     },
   },
@@ -121,9 +143,12 @@ const BENCHMARKS: BenchmarkDef[] = [
 async function runBenchmark(
   def: BenchmarkDef,
   runtimes: Runtime[],
+  warmup: number,
   iterations: number,
 ) {
-  console.log(`\n=== ${def.label} (${iterations} iterations) ===`);
+  console.log(
+    `\n=== ${def.label} (${warmup} warmup + ${iterations} iterations) ===`,
+  );
   const entries = await Promise.all(
     runtimes.map(async (runtime) => {
       const cfg = configs[runtime];
@@ -132,28 +157,39 @@ async function runBenchmark(
         return [runtime, null] as const;
       }
 
-      let totalMs = 0;
+      for (let i = 0; i < warmup; i++) {
+        await def.step(cfg, i);
+      }
+      console.log(`  [${runtime}] warmed up`);
+
+      const durations: number[] = [];
       for (let i = 0; i < iterations; i++) {
-        totalMs += await def.step(cfg, i);
+        durations.push(await def.step(cfg, i));
         if ((i + 1) % 10 === 0)
           console.log(`  [${runtime}] ${def.label}: ${i + 1}/${iterations}`);
       }
-      return [runtime, totalMs] as const;
+      return [runtime, durations] as const;
     }),
   );
 
   console.log(`\n  Results (${def.label}):`);
-  for (const [runtime, ms] of entries) {
-    if (ms != null) {
+  for (const [runtime, durations] of entries) {
+    if (durations != null) {
+      const sorted = [...durations].sort((a, b) => a - b);
+      const mean = durations.reduce((s, v) => s + v, 0) / durations.length;
+      const p50 = percentile(sorted, 50);
+      const p95 = percentile(sorted, 95);
+      const p99 = percentile(sorted, 99);
       console.log(
-        `    ${runtime}: ${(ms / 1000).toFixed(2)}s total  (${(ms / iterations).toFixed(1)}ms/iter, computation only)`,
+        `    ${runtime}: mean=${mean.toFixed(1)}ms  p50=${p50.toFixed(1)}ms  p95=${p95.toFixed(1)}ms  p99=${p99.toFixed(1)}ms`,
       );
     }
   }
 }
 
 async function main() {
-  const iterations = parseInt(process.env.ITERATIONS || "50", 10);
+  const iterations = parseInt(process.env.ITERATIONS || "100", 10);
+  const warmup = parseInt(process.env.WARMUP_ITERATIONS || "3", 10);
   const argRuntimes = process.argv
     .slice(2)
     .filter((a) =>
@@ -166,10 +202,11 @@ async function main() {
 
   console.log("Starting benchmark suite");
   console.log(`Iterations: ${iterations}`);
+  console.log(`Warmup:     ${warmup}`);
   console.log(`Runtimes:   ${selectedRuntimes.join(", ")}`);
 
   for (const def of BENCHMARKS) {
-    await runBenchmark(def, selectedRuntimes, iterations);
+    await runBenchmark(def, selectedRuntimes, warmup, iterations);
   }
 
   console.log("\n=== Benchmark complete ===");
